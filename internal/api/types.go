@@ -1,6 +1,10 @@
 package api
 
-import "time"
+import (
+	"bytes"
+	"encoding/json"
+	"time"
+)
 
 // Workout represents a workout session
 type Workout struct {
@@ -280,7 +284,43 @@ type WorkoutResponse struct {
 
 // RoutineResponse represents the response from POST/PUT /routines
 type RoutineResponse struct {
-	Routines []Routine `json:"routine"`
+	Routine Routine `json:"routine"`
+}
+
+// UnmarshalJSON accepts every shape POST/PUT /routines has been seen to return:
+// "routine" as an object (live API today), "routine" as a one-element array
+// (obay/hevycli#2), and a bare routine with no envelope (what Hevy's own
+// OpenAPI document specifies). Decoding only one of them turned a routine that
+// had already been written into an error.
+func (r *RoutineResponse) UnmarshalJSON(data []byte) error {
+	var envelope struct {
+		Routine json.RawMessage `json:"routine"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return err
+	}
+
+	if envelope.Routine == nil {
+		return json.Unmarshal(data, &r.Routine)
+	}
+
+	raw := bytes.TrimSpace(envelope.Routine)
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+
+	if raw[0] == '[' {
+		var routines []Routine
+		if err := json.Unmarshal(raw, &routines); err != nil {
+			return err
+		}
+		if len(routines) > 0 {
+			r.Routine = routines[0]
+		}
+		return nil
+	}
+
+	return json.Unmarshal(raw, &r.Routine)
 }
 
 // RoutineFolderResponse represents the response from POST /routine_folders

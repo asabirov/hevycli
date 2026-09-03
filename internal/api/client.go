@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -338,10 +339,8 @@ func (c *Client) DeleteWorkout(id string) error {
 
 // CreateRoutine creates a new routine
 func (c *Client) CreateRoutine(req *CreateRoutineRequest) (*Routine, error) {
-	var result RoutineResponse
 	resp, err := c.httpClient.R().
 		SetBody(req).
-		SetResult(&result).
 		Post("/routines")
 
 	if err != nil {
@@ -355,22 +354,13 @@ func (c *Client) CreateRoutine(req *CreateRoutineRequest) (*Routine, error) {
 		return nil, err
 	}
 
-	if len(result.Routines) == 0 {
-		return nil, &APIError{
-			ErrorCode:    "EMPTY_RESPONSE",
-			ErrorMessage: "API returned no routines in response",
-		}
-	}
-
-	return &result.Routines[0], nil
+	return decodeRoutineResponse(resp.Body(), "created")
 }
 
 // UpdateRoutine updates an existing routine
 func (c *Client) UpdateRoutine(id string, req *UpdateRoutineRequest) (*Routine, error) {
-	var result RoutineResponse
 	resp, err := c.httpClient.R().
 		SetBody(req).
-		SetResult(&result).
 		Put("/routines/" + id)
 
 	if err != nil {
@@ -384,14 +374,31 @@ func (c *Client) UpdateRoutine(id string, req *UpdateRoutineRequest) (*Routine, 
 		return nil, err
 	}
 
-	if len(result.Routines) == 0 {
+	return decodeRoutineResponse(resp.Body(), "updated")
+}
+
+// decodeRoutineResponse reads the routine out of a POST/PUT /routines body. The
+// write has already succeeded by the time this runs, so a failure here is about
+// the response and not the request — it says so, because a caller that reads it
+// as a failed write retries and creates a duplicate.
+func decodeRoutineResponse(body []byte, verb string) (*Routine, error) {
+	var result RoutineResponse
+	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, &APIError{
-			ErrorCode:    "EMPTY_RESPONSE",
-			ErrorMessage: "API returned no routines in response",
+			ErrorCode:    "INVALID_RESPONSE",
+			ErrorMessage: fmt.Sprintf("the routine was %s, but its API response could not be read — do not retry", verb),
+			ErrorDetails: err.Error(),
 		}
 	}
 
-	return &result.Routines[0], nil
+	if result.Routine.ID == "" {
+		return nil, &APIError{
+			ErrorCode:    "INVALID_RESPONSE",
+			ErrorMessage: fmt.Sprintf("the routine was %s, but the API returned no routine — do not retry", verb),
+		}
+	}
+
+	return &result.Routine, nil
 }
 
 // CreateRoutineFolder creates a new routine folder
